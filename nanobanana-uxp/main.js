@@ -1,6 +1,4 @@
 const { app, core } = require("photoshop");
-const { localFileSystem } = require("uxp").storage;
-const { entryWithSystemPath } = require("uxp").storage.localFileSystem;
 const fs = require("uxp").storage.localFileSystem;
 
 // State
@@ -54,30 +52,17 @@ async function getSelectionAsBase64() {
                 throw new Error("Please make a selection first.");
             }
 
-            // Create a temp document to paste the selection
-            // We don't know the exact size of the selection easily without more complex code,
-            // but we can create a doc and let it fit? No, we need size.
-            // Workaround: Paste into a new document created from clipboard?
-            // Photoshop doesn't strictly have "New from Clipboard" in DOM API cleanly exposed as one call,
-            // but `app.documents.add` usually defaults to clipboard size if preset is not given?
-            // Let's try creating a doc with a default size, then resizing?
-            // Actually, `paste` will paste into center.
-
-            // Better approach for UXP:
-            // 1. Get bounds of selection (hard in DOM without batchPlay).
-            // Let's assume we can just "Crop" the current document to selection?
-            // No, that destroys the doc.
             // Duplicate the document first.
-
             const tempDoc = await doc.duplicate("temp_export");
             await tempDoc.cropTo(tempDoc.selection.bounds); // Crop to selection
-            // If the selection was irregular, this crops to bounding box. Good enough.
 
             // Now save this temp doc to a temp file
             const tempFolder = await fs.getTemporaryFolder();
             const tempFile = await tempFolder.createFile("temp_selection.jpg", { overwrite: true });
 
-            await tempDoc.saveAs.jpg(tempFile, { quality: 80 }, true);
+            // Correct UXP syntax for saveAs
+            // Quality is 0-12 range for JPEG in Photoshop
+            await tempDoc.saveAs.jpg(tempFile, { quality: 12 }, true);
 
             // Close temp doc
             await tempDoc.closeWithoutSaving();
@@ -98,7 +83,6 @@ async function callGeminiAPI(base64Image, userPrompt, presetPrompt = "") {
     if (!currentApiKey) throw new Error("Please enter your Gemini API Key.");
 
     // Combine prompts
-    // If user provided a prompt, append it to preset.
     let finalPrompt = presetPrompt;
     if (userPrompt) {
         finalPrompt = finalPrompt ? `${finalPrompt}. ${userPrompt}` : userPrompt;
@@ -107,7 +91,10 @@ async function callGeminiAPI(base64Image, userPrompt, presetPrompt = "") {
     // Default fallback
     if (!finalPrompt) finalPrompt = "Improve this image";
 
-    const model = "gemini-2.5-flash-image"; // Or 'gemini-3-pro-image-preview'
+    // Note: 'gemini-2.5-flash-image' is the model requested by the user documentation provided.
+    // If this model is not available in the public API yet, users might need to switch to 'gemini-1.5-pro'
+    // or wait for availability.
+    const model = "gemini-2.5-flash-image";
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${currentApiKey}`;
 
     const payload = {
@@ -139,13 +126,6 @@ async function callGeminiAPI(base64Image, userPrompt, presetPrompt = "") {
     }
 
     const data = await response.json();
-
-    // Extract image
-    // Response structure: candidates[0].content.parts[0].inline_data.data (or similar)
-    // The API might return 'inlineData' (camelCase) or 'inline_data' depending on version/client,
-    // but raw REST usually follows snake_case in docs but JSON output often camelCase in Google APIs.
-    // Let's check the docs' REST example output.
-    // Docs say: `inlineData` in JSON response.
 
     try {
         const parts = data.candidates[0].content.parts;
@@ -188,9 +168,6 @@ async function placeImageLayer(base64Image) {
             await resultDoc.closeWithoutSaving();
 
             // Paste into Original
-            // Note: This will paste into the current selection (centering it).
-            // Since we generated from the selection bounds, simply pasting into the *same* selection
-            // should align it perfectly if the aspect ratio matches.
             await doc.paste();
 
         } catch (error) {
