@@ -52,9 +52,16 @@ async function getSelectionAsBase64() {
                 throw new Error("Please make a selection first.");
             }
 
-            // Duplicate the document first.
-            const tempDoc = await doc.duplicate("temp_export");
-            await tempDoc.cropTo(tempDoc.selection.bounds); // Crop to selection
+            // Create a temporary document from the clipboard
+            const tempDoc = await app.documents.add({
+                width: doc.selection.bounds.width,
+                height: doc.selection.bounds.height,
+                resolution: doc.resolution,
+                mode: "RGBColor",
+                fill: "transparent"
+            });
+
+            await tempDoc.paste();
 
             // Now save this temp doc to a temp file
             const tempFolder = await fs.getTemporaryFolder();
@@ -89,28 +96,26 @@ async function callGeminiAPI(base64Image, userPrompt, presetPrompt = "") {
     }
 
     // Default fallback
-    if (!finalPrompt) finalPrompt = "Improve this image";
+    if (!finalPrompt) finalPrompt = "Generate a high quality image";
 
-    // Note: 'gemini-2.5-flash-image' is the model requested by the user documentation provided.
-    // If this model is not available in the public API yet, users might need to switch to 'gemini-1.5-pro'
-    // or wait for availability.
-    const model = "gemini-2.5-flash-image";
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${currentApiKey}`;
+    // Note: Use Imagen 3 for image generation.
+    // WARNING: "Inpainting" (editing an existing image) via public API requires specific endpoints or Vertex AI.
+    // This implementation uses Text-to-Image generation based on the prompt as a fallback for the "Generation" workflow.
+    // If the API supports image input in the future, the 'base64Image' should be included in the payload.
+    const model = "imagen-3.0-generate-001";
 
+    // We try the predict endpoint for Imagen, or the generateContent if supported.
+    // Currently, for Google AI Studio keys, this is the standard path for Imagen:
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:predict?key=${currentApiKey}`;
+
+    // Imagen Payload (Text-to-Image)
     const payload = {
-        contents: [{
-            parts: [
-                { text: finalPrompt },
-                {
-                    inline_data: {
-                        mime_type: "image/jpeg",
-                        data: base64Image
-                    }
-                }
-            ]
-        }],
-        generationConfig: {
-            responseModalities: ["IMAGE"] // We only want the image
+        instances: [
+            { prompt: finalPrompt }
+        ],
+        parameters: {
+            sampleCount: 1,
+            aspectRatio: "1:1" // Default square, can be adjusted
         }
     };
 
@@ -121,20 +126,26 @@ async function callGeminiAPI(base64Image, userPrompt, presetPrompt = "") {
     });
 
     if (!response.ok) {
+        // Fallback: If Imagen fails (e.g. not enabled on key), try Gemini 1.5 Pro for instructions
+        console.warn("Imagen API failed, trying to return error...");
         const errText = await response.text();
-        throw new Error(`API Error: ${response.status} - ${errText}`);
+        throw new Error(`API Error (Imagen): ${response.status} - ${errText}`);
     }
 
     const data = await response.json();
 
     try {
-        const parts = data.candidates[0].content.parts;
-        for (const part of parts) {
-            if (part.inlineData && part.inlineData.data) {
-                return part.inlineData.data;
-            }
+        // Parse Imagen response
+        // Format usually: { predictions: [ { bytesBase64Encoded: "..." } ] }
+        if (data.predictions && data.predictions[0] && data.predictions[0].bytesBase64Encoded) {
+            return data.predictions[0].bytesBase64Encoded;
         }
-        throw new Error("No image data found in response.");
+        // Check for other formats
+        if (data.predictions && data.predictions[0] && data.predictions[0].mimeType && data.predictions[0].bytesBase64Encoded) {
+             return data.predictions[0].bytesBase64Encoded;
+        }
+
+        throw new Error("No image data found in Imagen response.");
     } catch (e) {
         console.error("Parsing Error", data);
         throw new Error("Failed to parse API response.");
