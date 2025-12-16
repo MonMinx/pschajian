@@ -1,0 +1,32 @@
+{
+  "manifestVersion": 5,
+  "id": "com.nanobanana.uxp",
+  "name": "Nanobanana Magic",
+  "version": "1.0.1",
+  "main": "index.html",
+  "host": [
+    {
+      "app": "PS",
+      "minVersion": "24.0.0",
+      "data": {
+        "apiVersion": 2
+      }
+    }
+  ],
+  "requiredPermissions": {
+    "localFileSystem": "fullAccess",
+    "network": {
+      "domains": [
+        "https://generativelanguage.googleapis.com"
+      ]
+    },
+    "clipboard": "readAndWrite"
+  },
+  "icons": [
+    {
+      "width": 23,
+      "height": 23,
+      "path": "icons/icon.png"
+    }
+  ]
+}
